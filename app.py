@@ -1,5 +1,5 @@
-import requests
 import streamlit as st
+from scanner import scan_schedule_text  # Import your local deterministic engine directly!
 
 st.set_page_config(
     page_title="Solum 'Headline Trap' Schedule Scanner",
@@ -12,18 +12,22 @@ st.markdown(
     "*Built for Solum Health | Inspired by JP Montoya's October 2026 Forbes Article on Payer Prior Auth Relief Gaps.*"
 )
 
-# Sidebar for Bulletin Input
 st.sidebar.header("1. Payer Policy Bulletin")
 st.sidebar.markdown(
     "Paste a confusing insurance announcement below. Our engine compiles it into multi-variable rules and audits next week's schedule."
 )
 
-# Fetch default text from FastAPI
-try:
-    default_res = requests.get("http://127.0.0.1:8000/default-data").json()
-    default_text = default_res.get("default_bulletin_text", "")
-except Exception:
-    default_text = "UnitedHealthcare Policy Update..."
+# Default text fallback
+default_text = """PAYER BULLETIN: UnitedHealthcare Policy Update (Published October 2026)
+HEADLINE: UnitedHealthcare Reduces Administrative Burden by Cutting Prior Authorizations!
+
+Effective December 1, 2026, UnitedHealthcare is removing prior authorization requirements for Physical Therapy code 97110 and ABA therapy code 97153.
+
+EXCEPTIONS & FINE PRINT: 
+1. This waiver applies ONLY to commercial PPO and EPO plans. Medicaid MCO and Medicare Advantage plans are strictly excluded.
+2. Applies ONLY to patients aged 18 and older. Pediatric patients (under 18) still require prior authorization.
+3. Applies ONLY to clinics located in NY, CA, FL, and IL. Clinics in IN and TX remain subject to mandatory prior auth.
+4. Any date of service prior to December 1, 2026 is excluded."""
 
 bulletin_input = st.sidebar.text_area(
     "Raw Payer Announcement Text", value=default_text, height=250
@@ -32,15 +36,10 @@ bulletin_input = st.sidebar.text_area(
 if st.sidebar.button("🚨 Run Schedule Audit", type="primary"):
     with st.spinner("Compiling multi-variable rules & scanning schedule..."):
         try:
-            res = requests.post(
-                "http://127.0.0.1:8000/scan-schedule",
-                json={"bulletin_text": bulletin_input},
-            )
-            data = res.json()
+            # Call your scanner function directly in Python (no local API needed!)
+            data = scan_schedule_text(bulletin_input)
         except Exception as e:
-            st.error(
-                f"Could not connect to FastAPI backend. Is uvicorn running? Error: {e}"
-            )
+            st.error(f"Error running scanner: {e}")
             st.stop()
 
     # Top Metrics Banner
@@ -56,7 +55,6 @@ if st.sidebar.button("🚨 Run Schedule Audit", type="primary"):
 
     st.divider()
 
-    # Main columns: Schedule Audit vs Extracted Rules
     left_col, right_col = st.columns([2, 1])
 
     with left_col:
@@ -84,9 +82,7 @@ if st.sidebar.button("🚨 Run Schedule Audit", type="primary"):
                 with st.expander(
                     f"✅ SAFE (No Auth Needed): {alert['patient_name']} (CPT {alert['cpt_code']})"
                 ):
-                    st.success(
-                        f"Passed all checks. {alert['policy_citation']}"
-                    )
+                    st.success(f"Passed all checks. {alert['policy_citation']}")
 
     with right_col:
         st.subheader("🧠 Compiled Payer Rules")
