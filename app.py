@@ -1,12 +1,5 @@
-import sys
-import os
-
-# Ensure current directory is in path for cloud imports
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-from scanner import scan_schedule_text
-
 import streamlit as st
+from scanner import scan_schedule_text
 
 st.set_page_config(
     page_title="Solum 'Headline Trap' Schedule Scanner",
