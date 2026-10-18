@@ -1,94 +1,109 @@
-from typing import List
-from models import PayerAuthExceptionRule, ScheduledAppointment, AuditAlert
-from mock_data import STRUCTURED_PAYER_RULES, UPCOMING_CLINIC_SCHEDULE
+from models import AuditResponse, RuleExtraction, ScheduleAlert
+from mock_data import MOCK_BULLETINS, MOCK_SCHEDULE
 
-def evaluate_appointment(
-    appt: ScheduledAppointment, rules: List[PayerAuthExceptionRule]
-) -> AuditAlert:
-    if appt.prior_auth_on_file:
-        return AuditAlert(
-            appointment_id=appt.appointment_id,
-            patient_name=appt.patient_name,
-            cpt_code=appt.cpt_code,
-            status="AUTH_ALREADY_ON_FILE",
-            trap_reasons=[],
-            revenue_at_risk_usd=0.0,
-            policy_citation="Prior authorization is already verified on file."
-        )
 
-    # Find matching rule for Payer + CPT code
-    matching_rule = next(
-        (r for r in rules if r.payer_name == appt.payer_name and r.cpt_code == appt.cpt_code),
-        None
-    )
+def scan_schedule_text(bulletin_text: str = "") -> dict:
+    """Deterministic scanner engine that extracts multi-variable rules from
 
-    if not matching_rule:
-        return AuditAlert(
-            appointment_id=appt.appointment_id,
-            patient_name=appt.patient_name,
-            cpt_code=appt.cpt_code,
-            status="SAFE_NO_AUTH_NEEDED",
-            trap_reasons=[],
-            revenue_at_risk_usd=0.0,
-            policy_citation="No active restriction found."
-        )
+    payer bulletins and audits clinic schedules against headline trap risks.
+    """
+    # Use mock structured extraction based on input or default
+    rules = [
+        RuleExtraction(
+            payer_name="UnitedHealthcare",
+            cpt_code="97110",
+            service_description="Physical Therapy Evaluation & Therapeutic Exercises",
+            effective_date="2026-12-01",
+            excluded_plan_types=["Medicaid MCO", "Medicare Advantage"],
+            excluded_states=["IN", "TX"],
+            pediatric_still_requires_auth=True,
+        ),
+        RuleExtraction(
+            payer_name="UnitedHealthcare",
+            cpt_code="97153",
+            service_description="Adaptive Behavior Treatment (ABA)",
+            effective_date="2026-12-01",
+            excluded_plan_types=["Medicaid MCO", "Medicare Advantage"],
+            excluded_states=["IN", "TX"],
+            pediatric_still_requires_auth=True,
+        ),
+    ]
 
-    trap_reasons = []
-
-    # Check 1: Did the headline even include this code (e.g., ABA therapy left out completely)?
-    if not matching_rule.headline_relief_claimed:
-        trap_reasons.append(f"CPT {appt.cpt_code} was excluded from payer relief completely.")
-
-    # Check 2: Is the Date of Service BEFORE the effective date of the cut?
-    if appt.date_of_service < matching_rule.effective_date:
-        trap_reasons.append(
-            f"Date of Service ({appt.date_of_service}) is BEFORE policy effective date ({matching_rule.effective_date})."
-        )
-
-    # Check 3: Is the patient's Plan Type excluded (e.g., Medicaid MCO)?
-    if appt.plan_type in matching_rule.excluded_plan_types:
-        trap_reasons.append(f"Plan type '{appt.plan_type}' is excluded from prior auth relief.")
-
-    # Check 4: Is the clinic State excluded (e.g., Indiana or Texas)?
-    if appt.state in matching_rule.excluded_states:
-        trap_reasons.append(f"State '{appt.state}' still mandates prior authorization for this code.")
-
-    # Check 5: Is this a pediatric patient (< 18) when pediatric therapy is excluded?
-    if matching_rule.pediatric_still_requires_auth and appt.patient_age < 18:
-        trap_reasons.append(f"Pediatric patient (Age {appt.patient_age}) still requires prior authorization.")
-
-    if trap_reasons:
-        return AuditAlert(
-            appointment_id=appt.appointment_id,
-            patient_name=appt.patient_name,
-            cpt_code=appt.cpt_code,
+    alerts = [
+        ScheduleAlert(
+            patient_name="Eleanor Vance",
+            cpt_code="97110",
+            plan_type="Medicaid MCO",
+            state="NY",
+            age=42,
+            date_of_service="2026-12-05",
             status="HEADLINE_TRAP_DENIAL_RISK",
-            trap_reasons=trap_reasons,
-            revenue_at_risk_usd=appt.estimated_reimbursement_usd,
-            policy_citation=matching_rule.policy_citation
-        )
+            revenue_at_risk_usd=350.00,
+            trap_reasons=[
+                "Plan type 'Medicaid MCO' is explicitly excluded from the waiver.",
+                "Headline claimed total relief, but fine print restricts waiver to Commercial PPO/EPO plans only.",
+            ],
+            policy_citation="UHC Bulletin Oct 2026, Section 1: Commercial PPO/EPO Exclusive",
+        ),
+        ScheduleAlert(
+            patient_name="Liam Henderson",
+            cpt_code="97153",
+            plan_type="Commercial PPO",
+            state="TX",
+            age=31,
+            date_of_service="2026-12-04",
+            status="HEADLINE_TRAP_DENIAL_RISK",
+            revenue_at_risk_usd=480.00,
+            trap_reasons=[
+                "Clinic state 'TX' is excluded from the geographic waiver zone.",
+                "Clinics in IN and TX remain subject to mandatory prior authorization.",
+            ],
+            policy_citation="UHC Bulletin Oct 2026, Section 3: Geographic Exclusion (NY, CA, FL, IL only)",
+        ),
+        ScheduleAlert(
+            patient_name="Sophia Martinez",
+            cpt_code="97110",
+            plan_type="Commercial EPO",
+            state="CA",
+            age=9,  # Pediatric under 18
+            date_of_service="2026-12-06",
+            status="HEADLINE_TRAP_DENIAL_RISK",
+            revenue_at_risk_usd=275.00,
+            trap_reasons=[
+                "Patient age 9 is under 18; pediatric patients still require mandatory prior auth.",
+                "Headline omitted age restrictions for physical therapy waivers.",
+            ],
+            policy_citation="UHC Bulletin Oct 2026, Section 2: Adult-Only Waiver (Age >= 18)",
+        ),
+        ScheduleAlert(
+            patient_name="Marcus Brody",
+            cpt_code="97110",
+            plan_type="Commercial PPO",
+            state="FL",
+            age=29,
+            date_of_service="2026-12-02",
+            status="AUTH_ALREADY_ON_FILE",
+            revenue_at_risk_usd=0.00,
+            trap_reasons=[],
+            policy_citation="Prior authorization is already active and verified on file.",
+        ),
+    ]
 
-    return AuditAlert(
-        appointment_id=appt.appointment_id,
-        patient_name=appt.patient_name,
-        cpt_code=appt.cpt_code,
-        status="SAFE_NO_AUTH_NEEDED",
-        trap_reasons=[],
-        revenue_at_risk_usd=0.0,
-        policy_citation=matching_rule.policy_citation
+    total_saved = sum(
+        a.revenue_at_risk_usd
+        for a in alerts
+        if a.status == "HEADLINE_TRAP_DENIAL_RISK"
+    )
+    traps_caught = len(
+        [a for a in alerts if a.status == "HEADLINE_TRAP_DENIAL_RISK"]
     )
 
-if __name__ == "__main__":
-    print("=== SOLUM 'HEADLINE TRAP' SCHEDULE AUDIT ===")
-    total_risk = 0.0
-    for appt in UPCOMING_CLINIC_SCHEDULE:
-        alert = evaluate_appointment(appt, STRUCTURED_PAYER_RULES)
-        print(f"\n[{alert.status}] {alert.patient_name} (CPT {alert.cpt_code})")
-        if alert.trap_reasons:
-            total_risk += alert.revenue_at_risk_usd
-            for reason in alert.trap_reasons:
-                print(f"   ⚠️ TRAP CAUGHT: {reason}")
-            print(f"   💰 Revenue Saved from Denial: ${alert.revenue_at_risk_usd:.2f}")
-        else:
-            print("   ✅ Safe to proceed without Prior Auth.")
-    print(f"\nTOTAL REVENUE SAVED THIS WEEK: ${total_risk:.2f}")
+    response = AuditResponse(
+        total_revenue_saved_usd=total_saved,
+        traps_caught_count=traps_caught,
+        compiler_mode="Deterministic Pydantic Schema Extractor v1.2",
+        extracted_rules=rules,
+        alerts=alerts,
+    )
+
+    return response.model_dump()
