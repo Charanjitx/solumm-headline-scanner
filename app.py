@@ -1,5 +1,12 @@
+import sys
+import os
+
+# Ensure current directory is in path for cloud imports
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from scanner import scan_schedule_text
+
 import streamlit as st
-from scanner import scan_schedule_text  # Import your local deterministic engine directly!
 
 st.set_page_config(
     page_title="Solum 'Headline Trap' Schedule Scanner",
@@ -36,7 +43,6 @@ bulletin_input = st.sidebar.text_area(
 if st.sidebar.button("🚨 Run Schedule Audit", type="primary"):
     with st.spinner("Compiling multi-variable rules & scanning schedule..."):
         try:
-            # Call your scanner function directly in Python (no local API needed!)
             data = scan_schedule_text(bulletin_input)
         except Exception as e:
             st.error(f"Error running scanner: {e}")
